@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Paper Notes</string>
+    <string name="note_widget_title">Note</string>
+    <string name="timer_widget_title">Timer</string>
+</resources>

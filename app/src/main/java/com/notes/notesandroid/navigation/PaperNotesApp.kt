@@ -40,13 +40,17 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.notes.notesandroid.data.NotesRepository
 import com.notes.notesandroid.data.model.AppThemeMode
+import com.notes.notesandroid.data.model.Note
 import com.notes.notesandroid.feature.notes.NoteEditorRoute
+import com.notes.notesandroid.feature.notes.NoteMarkdownEditorRoute
+import com.notes.notesandroid.feature.notes.NoteTitleEditorRoute
 import com.notes.notesandroid.feature.notes.NotesRoute
 import com.notes.notesandroid.feature.settings.SettingsRoute
 import com.notes.notesandroid.feature.timers.TimerEditorRoute
 import com.notes.notesandroid.feature.timers.TimersRoute
 import com.notes.notesandroid.ui.theme.NotesAndroidTheme
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 enum class TopLevelDestination(
     val route: String,
@@ -60,10 +64,14 @@ enum class TopLevelDestination(
 private object AppRoute {
     const val NOTE_NEW = "note/new"
     const val NOTE_EDIT = "note/edit/{noteId}"
+    const val NOTE_EDIT_TITLE = "note/title/{noteId}"
+    const val NOTE_EDIT_MARKDOWN = "note/markdown/{noteId}"
     const val TIMER_NEW = "timer/new"
     const val TIMER_EDIT = "timer/edit/{timerId}"
 
     fun noteEdit(noteId: String): String = "note/edit/$noteId"
+    fun noteEditTitle(noteId: String): String = "note/title/$noteId"
+    fun noteEditMarkdown(noteId: String): String = "note/markdown/$noteId"
     fun timerEdit(timerId: String): String = "timer/edit/$timerId"
 }
 
@@ -221,14 +229,43 @@ fun PaperNotesApp(
                         SettingsRoute(repository = repository)
                     }
                     composable(AppRoute.NOTE_NEW) {
-                        NoteEditorRoute(
-                            repository = repository,
-                            noteId = null,
-                            onBack = { navController.popBackStack() },
-                        )
+                        LaunchedEffect(Unit) {
+                            val noteId = UUID.randomUUID().toString()
+                            val now = System.currentTimeMillis()
+                            repository.upsertNote(
+                                Note(
+                                    id = noteId,
+                                    title = "",
+                                    content = "",
+                                    pinned = false,
+                                    createdAt = now,
+                                    updatedAt = now,
+                                )
+                            )
+                            navController.navigate(AppRoute.noteEdit(noteId)) {
+                                popUpTo(AppRoute.NOTE_NEW) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
                     }
                     composable(AppRoute.NOTE_EDIT) { backStackEntry ->
                         NoteEditorRoute(
+                            repository = repository,
+                            noteId = backStackEntry.arguments?.getString("noteId"),
+                            onBack = { navController.popBackStack() },
+                            onEditTitle = { noteId -> navController.navigate(AppRoute.noteEditTitle(noteId)) },
+                            onEditMarkdown = { noteId -> navController.navigate(AppRoute.noteEditMarkdown(noteId)) },
+                        )
+                    }
+                    composable(AppRoute.NOTE_EDIT_TITLE) { backStackEntry ->
+                        NoteTitleEditorRoute(
+                            repository = repository,
+                            noteId = backStackEntry.arguments?.getString("noteId"),
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(AppRoute.NOTE_EDIT_MARKDOWN) { backStackEntry ->
+                        NoteMarkdownEditorRoute(
                             repository = repository,
                             noteId = backStackEntry.arguments?.getString("noteId"),
                             onBack = { navController.popBackStack() },

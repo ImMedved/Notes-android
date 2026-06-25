@@ -6,7 +6,7 @@ import android.content.ContextWrapper
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,275 +35,273 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.notes.notesandroid.data.NotesRepository
 import com.notes.notesandroid.data.model.Note
 import com.notes.notesandroid.data.model.SyncStatus
+import com.notes.notesandroid.data.model.previewText
 import com.notes.notesandroid.ui.components.PullToRevealSyncContainer
+import com.notes.notesandroid.ui.components.SectionCard
 import com.notes.notesandroid.util.MarkdownRenderer
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 @Composable
 fun NoteEditorRoute(
     repository: NotesRepository,
     noteId: String?,
     onBack: () -> Unit,
+    onEditTitle: (String) -> Unit,
+    onEditMarkdown: (String) -> Unit,
 ) {
-    val existingNoteFlow = remember(noteId) { noteId?.let(repository::observeNote) }
+    val note = rememberNote(repository, noteId)
     val syncStatus by repository.syncStatus.collectAsStateWithLifecycle(initialValue = SyncStatus())
-    var title by remember(noteId) { mutableStateOf("") }
-    var contentField by remember(noteId) { mutableStateOf(TextFieldValue("")) }
-    var pinned by remember(noteId) { mutableStateOf(false) }
-    var createdAt by remember(noteId) { mutableStateOf(System.currentTimeMillis()) }
-    var previewMode by remember(noteId) { mutableStateOf(noteId != null) }
-    var titleFocused by remember(noteId) { mutableStateOf(false) }
-    var markdownFocused by remember(noteId) { mutableStateOf(false) }
+    val currentNote = note ?: return
+    val renderedMarkdown = remember(currentNote.content) {
+        MarkdownRenderer.render(currentNote.content.ifBlank { "_Nothing to preview yet._" })
+    }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val renderedMarkdown = remember(contentField.text) {
-        MarkdownRenderer.render(contentField.text.ifBlank { "_Nothing to preview yet._" })
-    }
 
-    DisposableEffect(context) {
-        val activity = context.findActivity()
-        val window = activity?.window
-        val previousMode = window?.attributes?.softInputMode
-        window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
-        onDispose {
-            if (previousMode != null) {
-                window.setSoftInputMode(previousMode)
-            }
-        }
-    }
-
-    LaunchedEffect(existingNoteFlow) {
-        val note = existingNoteFlow?.first()
-        if (note != null) {
-            title = note.title
-            contentField = TextFieldValue(note.content)
-            pinned = note.pinned
-            createdAt = note.createdAt
-        }
-    }
-
-    fun persistNote(updatedContent: String = contentField.text, exitAfterSave: Boolean = false) {
+    fun toggleTask(lineIndex: Int) {
+        val updatedText = MarkdownRenderer.toggleCheckbox(currentNote.content, lineIndex)
+        if (updatedText == currentNote.content) return
         scope.launch {
             repository.upsertNote(
-                Note(
-                    id = noteId ?: UUID.randomUUID().toString(),
-                    title = title,
-                    content = updatedContent,
-                    pinned = pinned,
-                    createdAt = createdAt,
+                currentNote.copy(
+                    content = updatedText,
                     updatedAt = System.currentTimeMillis(),
                 )
             )
-            if (exitAfterSave) {
-                onBack()
-            }
-        }
-    }
-
-    fun toggleTask(lineIndex: Int) {
-        val updatedText = MarkdownRenderer.toggleCheckbox(contentField.text, lineIndex)
-        if (updatedText == contentField.text) return
-
-        val newCursor = contentField.selection.end.coerceAtMost(updatedText.length)
-        contentField = contentField.copy(
-            text = updatedText,
-            selection = TextRange(newCursor),
-        )
-
-        if (noteId != null) {
-            persistNote(updatedContent = updatedText)
         }
     }
 
     PullToRevealSyncContainer(
         syncStatus = syncStatus,
         modifier = Modifier.fillMaxSize(),
-        enabled = previewMode,
+        enabled = true,
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .navigationBarsPadding()
                 .padding(horizontal = 18.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            if (!titleFocused) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    NoteEditorField(
-                        previewMode = previewMode,
-                        noteId = noteId,
-                        title = title,
-                        pinned = pinned,
-                        createdAt = createdAt,
-                        contentField = contentField,
-                        renderedHtml = renderedMarkdown.html,
-                        onContentChange = { contentField = it },
-                        onTaskToggle = ::toggleTask,
-                        onEditorFocusChange = {
-                            markdownFocused = it
-                            if (it) {
-                                titleFocused = false
-                            }
-                        },
-                    )
-                }
-            }
-
-            if (!previewMode) {
-                MarkdownActionBar(
-                    value = contentField,
-                    onValueChange = { contentField = it },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth(),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                TextButton(onClick = onBack) { Text("Back") }
+                FilterChip(
+                    selected = currentNote.pinned,
+                    onClick = {
+                        scope.launch {
+                            repository.upsertNote(
+                                currentNote.copy(
+                                    pinned = !currentNote.pinned,
+                                    updatedAt = System.currentTimeMillis(),
+                                )
+                            )
+                        }
+                    },
+                    label = { Text("Pinned") },
                 )
             }
 
-            if (!previewMode && !markdownFocused) {
-                Button(
-                    onClick = { persistNote(exitAfterSave = true) },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(bottom = 90.dp),
-                ) {
-                    Text("Save note")
-                }
+            SectionCard(
+                modifier = Modifier.clickable { onEditTitle(currentNote.id) },
+            ) {
+                Text(
+                    text = if (currentNote.title.isBlank()) "Untitled note" else currentNote.title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "Edit title",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
 
-            if (!markdownFocused) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        TextButton(onClick = onBack) { Text("Back") }
+            SectionCard(
+                modifier = Modifier.clickable { onEditMarkdown(currentNote.id) },
+            ) {
+                Text(
+                    text = currentNote.previewText(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "Open markdown editor",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
 
-                        FilterChip(
-                            selected = !previewMode,
-                            onClick = {
-                                markdownFocused = false
-                                titleFocused = false
-                                previewMode = false
-                            },
-                            label = { Text("Edit") },
-                        )
-
-                        FilterChip(
-                            selected = previewMode,
-                            onClick = {
-                                markdownFocused = false
-                                titleFocused = false
-                                previewMode = true
-                            },
-                            label = { Text("Preview") },
-                        )
-
-                        FilterChip(
-                            selected = pinned,
-                            onClick = { pinned = !pinned },
-                            label = { Text("Pinned") },
-                        )
-                    }
-
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onFocusChanged {
-                                titleFocused = it.isFocused
-                                if (it.isFocused) {
-                                    markdownFocused = false
-                                }
-                            },
-                        label = { Text("Title") },
-                        singleLine = true,
-                    )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
+                val bridge = remember(currentNote.id, currentNote.content) {
+                    TaskToggleBridge { lineIndex -> toggleTask(lineIndex) }
                 }
+                AndroidView(
+                    factory = { androidContext ->
+                        WebView(androidContext).apply {
+                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            settings.javaScriptEnabled = true
+                            addJavascriptInterface(bridge, "TaskBridge")
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { webView ->
+                        webView.loadDataWithBaseURL(
+                            null,
+                            renderedMarkdown.html,
+                            "text/html",
+                            "utf-8",
+                            null,
+                        )
+                    },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun NoteEditorField(
-    previewMode: Boolean,
+fun NoteTitleEditorRoute(
+    repository: NotesRepository,
     noteId: String?,
-    title: String,
-    pinned: Boolean,
-    createdAt: Long,
-    contentField: TextFieldValue,
-    renderedHtml: String,
-    onContentChange: (TextFieldValue) -> Unit,
-    onTaskToggle: (Int) -> Unit,
-    onEditorFocusChange: (Boolean) -> Unit,
+    onBack: () -> Unit,
 ) {
-    AnimatedContent(
-        targetState = previewMode,
-        label = "note-preview-mode",
-        modifier = Modifier.fillMaxSize(),
-    ) { isPreview ->
-        if (isPreview) {
-            val bridge = remember(noteId, title, pinned, createdAt, contentField.text) {
-                TaskToggleBridge { lineIndex -> onTaskToggle(lineIndex) }
-            }
-            AndroidView(
-                factory = { androidContext ->
-                    WebView(androidContext).apply {
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        settings.javaScriptEnabled = true
-                        addJavascriptInterface(bridge, "TaskBridge")
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-                update = { webView ->
-                    webView.loadDataWithBaseURL(
-                        null,
-                        renderedHtml,
-                        "text/html",
-                        "utf-8",
-                        null,
+    val note = rememberNote(repository, noteId)
+    val currentNote = note ?: return
+    var title by remember(currentNote.id, currentNote.title) { mutableStateOf(currentNote.title) }
+    val scope = rememberCoroutineScope()
+
+    SoftInputAdjustNothingEffect()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        TextButton(onClick = onBack) { Text("Back") }
+
+        OutlinedTextField(
+            value = title,
+            onValueChange = { title = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Title") },
+            singleLine = true,
+        )
+
+        Button(
+            onClick = {
+                scope.launch {
+                    repository.upsertNote(
+                        currentNote.copy(
+                            title = title,
+                            updatedAt = System.currentTimeMillis(),
+                        )
                     )
-                },
-            )
-        } else {
+                    onBack()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Save title")
+        }
+    }
+}
+
+@Composable
+fun NoteMarkdownEditorRoute(
+    repository: NotesRepository,
+    noteId: String?,
+    onBack: () -> Unit,
+) {
+    val note = rememberNote(repository, noteId)
+    val currentNote = note ?: return
+    var contentField by remember(currentNote.id, currentNote.content) { mutableStateOf(TextFieldValue(currentNote.content)) }
+    val scope = rememberCoroutineScope()
+
+    SoftInputAdjustNothingEffect()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        TextButton(onClick = onBack) { Text("Back") }
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
             OutlinedTextField(
                 value = contentField,
-                onValueChange = onContentChange,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .onFocusChanged { onEditorFocusChange(it.isFocused) },
+                onValueChange = { contentField = it },
+                modifier = Modifier.fillMaxSize(),
                 label = { Text("Markdown") },
                 placeholder = { Text("Write markdown, tasks, links, and code here.") },
                 textStyle = MaterialTheme.typography.bodyLarge,
             )
         }
+
+        MarkdownActionBar(
+            value = contentField,
+            onValueChange = { contentField = it },
+            onSave = {
+                scope.launch {
+                    repository.upsertNote(
+                        currentNote.copy(
+                            content = contentField.text,
+                            updatedAt = System.currentTimeMillis(),
+                        )
+                    )
+                    onBack()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
+}
+
+@Composable
+private fun rememberNote(
+    repository: NotesRepository,
+    noteId: String?,
+): Note? {
+    val existingNoteFlow = remember(noteId) { noteId?.let(repository::observeNote) }
+    var note by remember(noteId) { mutableStateOf<Note?>(null) }
+
+    LaunchedEffect(existingNoteFlow) {
+        note = existingNoteFlow?.first()
+    }
+
+    return note
 }
 
 @Composable
 private fun MarkdownActionBar(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
+    onSave: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -319,6 +317,11 @@ private fun MarkdownActionBar(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (onSave != null) {
+                Button(onClick = onSave) {
+                    Text("Save")
+                }
+            }
             MarkdownActionChip("Check") {
                 onValueChange(insertLinePrefix(value, "- [ ] "))
             }
@@ -396,6 +399,22 @@ private class TaskToggleBridge(
     @JavascriptInterface
     fun onTaskToggled(lineIndex: Int) {
         onToggle(lineIndex)
+    }
+}
+
+@Composable
+private fun SoftInputAdjustNothingEffect() {
+    val context = LocalContext.current
+    DisposableEffect(context) {
+        val activity = context.findActivity()
+        val window = activity?.window
+        val previousMode = window?.attributes?.softInputMode
+        window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        onDispose {
+            if (previousMode != null) {
+                window.setSoftInputMode(previousMode)
+            }
+        }
     }
 }
 

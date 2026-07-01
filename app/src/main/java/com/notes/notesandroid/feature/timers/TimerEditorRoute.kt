@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -36,6 +37,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -63,6 +66,10 @@ import kotlin.math.roundToInt
 
 private const val STOPWATCH_DURATION_PLACEHOLDER = 365L * 24L * 60L * 60L * 1000L
 
+/**
+ * Edits timers and stopwatch offsets. Stopwatch mode can either be adjusted as
+ * elapsed duration or mapped onto a real start date/time through the wheel dialog.
+ */
 @Composable
 fun TimerEditorRoute(
     repository: NotesRepository,
@@ -208,10 +215,10 @@ fun TimerEditorRoute(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 OutlinedButton(
-                    onClick = { applyStopwatchOffsetMillis(currentOffsetMillis + 10_000L) },
+                    onClick = { applyStopwatchOffsetMillis(currentOffsetMillis + 10L * 60L * 60L * 1000L) },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("+10 sec")
+                    Text("+10 hours")
                 }
                 OutlinedButton(
                     onClick = { applyStopwatchOffsetMillis(currentOffsetMillis + 10L * 60L * 1000L) },
@@ -220,10 +227,10 @@ fun TimerEditorRoute(
                     Text("+10 min")
                 }
                 OutlinedButton(
-                    onClick = { applyStopwatchOffsetMillis(currentOffsetMillis + 10L * 60L * 60L * 1000L) },
+                    onClick = { applyStopwatchOffsetMillis(currentOffsetMillis + 10_000L) },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("+10 hours")
+                    Text("+10 sec")
                 }
             }
 
@@ -325,6 +332,10 @@ fun TimerEditorRoute(
     }
 }
 
+/**
+ * Wheel-style dialog for mapping the current stopwatch offset onto a concrete
+ * calendar day and time. The confirmed value is converted back into elapsed time.
+ */
 @Composable
 private fun StopwatchStartTimeDialog(
     initialDateTime: LocalDateTime,
@@ -370,6 +381,8 @@ private fun StopwatchStartTimeDialog(
                     text = "Spin the wheels to align the stopwatch with a real moment in time.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // Every wheel shares the same centering logic so day/hour/minute/second
+                // all resolve to the same selected row in the highlighted center slot.
                 WheelDateTimePicker(
                     dayOptions = dayOptions,
                     selectedDayIndex = selectedDayIndex,
@@ -475,6 +488,8 @@ private fun WheelPickerColumn(
 ) {
     val itemHeight = 44.dp
     val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
+    val wheelTextColors = rememberWheelTextColors()
+    val centerPadding = itemHeight * 2
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex.coerceIn(0, values.lastIndex))
     val flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
 
@@ -487,10 +502,16 @@ private fun WheelPickerColumn(
 
     LaunchedEffect(listState.isScrollInProgress) {
         if (!listState.isScrollInProgress) {
-            val nearestIndex = (
-                listState.firstVisibleItemIndex +
-                    (listState.firstVisibleItemScrollOffset / itemHeightPx).roundToInt()
-                ).coerceIn(0, values.lastIndex)
+            val viewportCenter = (listState.layoutInfo.viewportStartOffset + listState.layoutInfo.viewportEndOffset) / 2
+            val nearestIndex = listState.layoutInfo.visibleItemsInfo
+                .minByOrNull { item ->
+                    val itemCenter = item.offset + (item.size / 2)
+                    kotlin.math.abs(itemCenter - viewportCenter)
+                }
+                ?.index
+                ?.coerceIn(0, values.lastIndex)
+                ?: selectedIndex.coerceIn(0, values.lastIndex)
+
             if (nearestIndex != selectedIndex) {
                 onSelectedIndexChange(nearestIndex)
             }
@@ -526,6 +547,7 @@ private fun WheelPickerColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 flingBehavior = flingBehavior,
+                contentPadding = PaddingValues(vertical = centerPadding),
             ) {
                 items(values.size) { index ->
                     Box(
@@ -538,9 +560,9 @@ private fun WheelPickerColumn(
                         Text(
                             text = values[index],
                             color = if (isSelected) {
-                                MaterialTheme.colorScheme.onSurface
+                                wheelTextColors.selected
                             } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
+                                wheelTextColors.unselected
                             },
                             modifier = Modifier.alpha(if (isSelected) 1f else 0.48f),
                             style = if (isSelected) {
@@ -561,7 +583,7 @@ private fun WheelPickerColumn(
                     .fillMaxWidth()
                     .height(itemHeight * 2)
                     .background(
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                     ),
             )
             Box(
@@ -570,7 +592,7 @@ private fun WheelPickerColumn(
                     .fillMaxWidth()
                     .height(itemHeight * 2)
                     .background(
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                     ),
             )
             Box(
@@ -582,3 +604,30 @@ private fun WheelPickerColumn(
         }
     }
 }
+
+/**
+ * Keeps the wheel legible in both app themes. The timer editor uses one dialog
+ * surface, but the selected and idle rows need stronger contrast than default M3.
+ */
+@Composable
+private fun rememberWheelTextColors(): WheelTextColors {
+    val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return remember(darkTheme) {
+        if (darkTheme) {
+            WheelTextColors(
+                selected = Color(0xFFF6EBD8),
+                unselected = Color(0xFFD1BEA1),
+            )
+        } else {
+            WheelTextColors(
+                selected = Color(0xFF3F3A3B),
+                unselected = Color(0xFF6A6366),
+            )
+        }
+    }
+}
+
+private data class WheelTextColors(
+    val selected: Color,
+    val unselected: Color,
+)

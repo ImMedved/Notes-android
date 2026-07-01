@@ -9,8 +9,8 @@
 
 ## TODO:
 
-- [ ] Fix the layout of the note viewing page and note title and text editing
-- [ ] Fix the date/time wheel in timer editing
+- [X] Fix the layout of the note viewing page and note title and text editing
+- [X] Fix the date/time wheel in timer editing
 - [ ] Enable automatic connection to the server via tailscale
 - [ ] Add the ability to mark checkboxes as completed/not completed in the note viewing and widget
 - [ ] Add a note archive

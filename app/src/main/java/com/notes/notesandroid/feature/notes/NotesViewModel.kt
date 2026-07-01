@@ -17,6 +17,11 @@ data class NotesUiState(
     val syncStatus: SyncStatus = SyncStatus(),
 )
 
+/**
+ * Keeps the notes list screen subscribed to both local note data and sync state.
+ * The screen itself stays simple: repository flows produce the list, and delete
+ * actions are pushed back into the same repository used by the note detail flow.
+ */
 class NotesViewModel(
     private val repository: NotesRepository,
 ) : ViewModel() {
@@ -38,6 +43,10 @@ class NotesViewModel(
     }
 
     companion object {
+        /**
+         * Notes screens resolve the shared repository through this factory so list,
+         * preview, and editor routes all work against the same local-first state.
+         */
         fun factory(repository: NotesRepository): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass.isAssignableFrom(NotesViewModel::class.java))

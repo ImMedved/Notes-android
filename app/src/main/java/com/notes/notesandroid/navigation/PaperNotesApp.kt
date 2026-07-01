@@ -62,6 +62,11 @@ enum class TopLevelDestination(
 }
 
 private object AppRoute {
+    /**
+     * Note workflow uses one view route and two focused editor routes.
+     * A new note is created first, then the user lands on the read-only screen
+     * and drills down into title or markdown editing from there.
+     */
     const val NOTE_NEW = "note/new"
     const val NOTE_EDIT = "note/edit/{noteId}"
     const val NOTE_EDIT_TITLE = "note/title/{noteId}"
@@ -211,6 +216,7 @@ fun PaperNotesApp(
                     startDestination = startRoute,
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    // Notes start from the list, then move into view-only note details.
                     composable(TopLevelDestination.NOTES.route) {
                         NotesRoute(
                             repository = repository,
@@ -228,6 +234,8 @@ fun PaperNotesApp(
                     composable(TopLevelDestination.SETTINGS.route) {
                         SettingsRoute(repository = repository)
                     }
+                    // Creating a note inserts a local draft first so the follow-up screens
+                    // can all work against a stable note id and the shared repository flow.
                     composable(AppRoute.NOTE_NEW) {
                         LaunchedEffect(Unit) {
                             val noteId = UUID.randomUUID().toString()
@@ -248,6 +256,8 @@ fun PaperNotesApp(
                             }
                         }
                     }
+                    // The note detail screen is the workflow hub: preview plus links to
+                    // isolated title and markdown editors.
                     composable(AppRoute.NOTE_EDIT) { backStackEntry ->
                         NoteEditorRoute(
                             repository = repository,
@@ -257,6 +267,8 @@ fun PaperNotesApp(
                             onEditMarkdown = { noteId -> navController.navigate(AppRoute.noteEditMarkdown(noteId)) },
                         )
                     }
+                    // Title and markdown are edited on separate screens to keep keyboard
+                    // behavior predictable and avoid mixing multiple input modes at once.
                     composable(AppRoute.NOTE_EDIT_TITLE) { backStackEntry ->
                         NoteTitleEditorRoute(
                             repository = repository,

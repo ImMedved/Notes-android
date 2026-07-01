@@ -11,6 +11,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,17 +41,21 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.notes.notesandroid.data.NotesRepository
 import com.notes.notesandroid.data.model.Note
 import com.notes.notesandroid.data.model.SyncStatus
 import com.notes.notesandroid.data.model.previewText
 import com.notes.notesandroid.ui.components.PullToRevealSyncContainer
-import com.notes.notesandroid.ui.components.SectionCard
 import com.notes.notesandroid.util.MarkdownRenderer
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+/**
+ * Displays the note in read-only mode and routes the user into dedicated title
+ * and markdown editors without mixing editing controls into the preview screen.
+ */
 @Composable
 fun NoteEditorRoute(
     repository: NotesRepository,
@@ -62,10 +67,23 @@ fun NoteEditorRoute(
     val note = rememberNote(repository, noteId)
     val syncStatus by repository.syncStatus.collectAsStateWithLifecycle(initialValue = SyncStatus())
     val currentNote = note ?: return
-    val renderedMarkdown = remember(currentNote.content) {
-        MarkdownRenderer.render(currentNote.content.ifBlank { "_Nothing to preview yet._" })
+    var pinnedUi by remember(currentNote.id) { mutableStateOf(currentNote.pinned) }
+    val baseColorScheme = MaterialTheme.colorScheme
+    val isDarkNoteView = baseColorScheme.background.luminance() < 0.5f
+    val noteViewColors = remember(isDarkNoteView, baseColorScheme) {
+        noteViewColorScheme(baseColorScheme, isDarkNoteView)
+    }
+    val renderedMarkdown = remember(currentNote.content, isDarkNoteView) {
+        MarkdownRenderer.render(
+            markdown = currentNote.content.ifBlank { "_Nothing to preview yet._" },
+            darkTheme = isDarkNoteView,
+        )
     }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(currentNote.pinned) {
+        pinnedUi = currentNote.pinned
+    }
 
     fun toggleTask(lineIndex: Int) {
         val updatedText = MarkdownRenderer.toggleCheckbox(currentNote.content, lineIndex)
@@ -80,103 +98,113 @@ fun NoteEditorRoute(
         }
     }
 
-    PullToRevealSyncContainer(
-        syncStatus = syncStatus,
-        modifier = Modifier.fillMaxSize(),
-        enabled = true,
+    MaterialTheme(
+        colorScheme = noteViewColors,
+        typography = MaterialTheme.typography,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
-                .padding(horizontal = 18.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+        PullToRevealSyncContainer(
+            syncStatus = syncStatus,
+            modifier = Modifier.fillMaxSize(),
+            enabled = true,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                TextButton(onClick = onBack) { Text("Back") }
-                FilterChip(
-                    selected = currentNote.pinned,
-                    onClick = {
-                        scope.launch {
-                            repository.upsertNote(
-                                currentNote.copy(
-                                    pinned = !currentNote.pinned,
-                                    updatedAt = System.currentTimeMillis(),
-                                )
-                            )
-                        }
-                    },
-                    label = { Text("Pinned") },
-                )
-            }
-
-            SectionCard(
-                modifier = Modifier.clickable { onEditTitle(currentNote.id) },
-            ) {
-                Text(
-                    text = if (currentNote.title.isBlank()) "Untitled note" else currentNote.title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = "Edit title",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-
-            SectionCard(
-                modifier = Modifier.clickable { onEditMarkdown(currentNote.id) },
-            ) {
-                Text(
-                    text = currentNote.previewText(),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "Open markdown editor",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-
-            Box(
+            Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
+                    .fillMaxSize()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 18.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                val bridge = remember(currentNote.id, currentNote.content) {
-                    TaskToggleBridge { lineIndex -> toggleTask(lineIndex) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TextButton(onClick = onBack) { Text("Back") }
+                    FilterChip(
+                        selected = pinnedUi,
+                        onClick = {
+                            val nextPinned = !pinnedUi
+                            pinnedUi = nextPinned
+                            scope.launch {
+                                repository.upsertNote(
+                                    currentNote.copy(
+                                        pinned = nextPinned,
+                                        updatedAt = System.currentTimeMillis(),
+                                    )
+                                )
+                            }
+                        },
+                        label = { Text("Pinned") },
+                    )
                 }
-                AndroidView(
-                    factory = { androidContext ->
-                        WebView(androidContext).apply {
-                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                            settings.javaScriptEnabled = true
-                            addJavascriptInterface(bridge, "TaskBridge")
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                    update = { webView ->
-                        webView.loadDataWithBaseURL(
-                            null,
-                            renderedMarkdown.html,
-                            "text/html",
-                            "utf-8",
-                            null,
-                        )
-                    },
-                )
+
+                NoteSectionCard(
+                    modifier = Modifier.clickable { onEditTitle(currentNote.id) },
+                ) {
+                    Text(
+                        text = if (currentNote.title.isBlank()) "Untitled note" else currentNote.title,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Edit title",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+
+                NoteSectionCard(
+                    modifier = Modifier.clickable { onEditMarkdown(currentNote.id) },
+                ) {
+                    Text(
+                        text = currentNote.previewText(),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Open markdown editor",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                ) {
+                    val bridge = remember(currentNote.id, currentNote.content) {
+                        TaskToggleBridge { lineIndex -> toggleTask(lineIndex) }
+                    }
+                    AndroidView(
+                        factory = { androidContext ->
+                            WebView(androidContext).apply {
+                                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                settings.javaScriptEnabled = true
+                                addJavascriptInterface(bridge, "TaskBridge")
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { webView ->
+                            webView.loadDataWithBaseURL(
+                                null,
+                                renderedMarkdown.html,
+                                "text/html",
+                                "utf-8",
+                                null,
+                            )
+                        },
+                    )
+                }
             }
         }
     }
 }
 
+/**
+ * Edits only the note title so the keyboard flow stays isolated from markdown editing.
+ */
 @Composable
 fun NoteTitleEditorRoute(
     repository: NotesRepository,
@@ -226,6 +254,9 @@ fun NoteTitleEditorRoute(
     }
 }
 
+/**
+ * Hosts the full-screen markdown editor together with quick markdown actions and save affordance.
+ */
 @Composable
 fun NoteMarkdownEditorRoute(
     repository: NotesRepository,
@@ -282,18 +313,18 @@ fun NoteMarkdownEditorRoute(
     }
 }
 
+/**
+ * Resolves the current note from the repository and keeps the note screens
+ * subscribed to live changes such as pinning and markdown checkbox updates.
+ */
 @Composable
 private fun rememberNote(
     repository: NotesRepository,
     noteId: String?,
 ): Note? {
     val existingNoteFlow = remember(noteId) { noteId?.let(repository::observeNote) }
-    var note by remember(noteId) { mutableStateOf<Note?>(null) }
-
-    LaunchedEffect(existingNoteFlow) {
-        note = existingNoteFlow?.first()
-    }
-
+    val note by existingNoteFlow?.collectAsStateWithLifecycle(initialValue = null)
+        ?: remember(noteId) { mutableStateOf<Note?>(null) }
     return note
 }
 
@@ -304,6 +335,8 @@ private fun MarkdownActionBar(
     onSave: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    // The markdown editor keeps formatting actions inline with save so the
+    // screen can stay visually stable while the keyboard is open.
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.extraLarge,
@@ -364,6 +397,8 @@ private fun insertWrapped(
     suffix: String,
     placeholder: String,
 ): TextFieldValue {
+    // Toolbar actions operate on the current selection so users can both wrap
+    // existing text and insert ready-to-edit markdown snippets.
     val start = value.selection.min
     val end = value.selection.max
     val selectedText = value.text.substring(start, end)
@@ -382,6 +417,8 @@ private fun insertLinePrefix(
     value: TextFieldValue,
     prefix: String,
 ): TextFieldValue {
+    // Line-based actions such as headers and checkboxes always target the
+    // current line start to match markdown editor expectations.
     val cursor = value.selection.min
     val lineStart = value.text.lastIndexOf('\n', startIndex = (cursor - 1).coerceAtLeast(0))
         .let { if (it == -1) 0 else it + 1 }
@@ -415,6 +452,58 @@ private fun SoftInputAdjustNothingEffect() {
                 window.setSoftInputMode(previousMode)
             }
         }
+    }
+}
+
+/**
+ * Applies a dedicated palette for the note preview screen so markdown cards and
+ * interactive controls read well in both light and dark application themes.
+ */
+private fun noteViewColorScheme(
+    base: androidx.compose.material3.ColorScheme,
+    darkTheme: Boolean,
+): androidx.compose.material3.ColorScheme {
+    return if (darkTheme) {
+        base.copy(
+            surface = Color(0xFF1B1015),
+            surfaceContainerLow = Color(0xFF25131A),
+            onSurface = Color(0xFFF7EFE2),
+            onSurfaceVariant = Color(0xFFD7C2A7),
+            primary = Color(0xFFD9B567),
+        )
+    } else {
+        base.copy(
+            surface = Color(0xFFF8F2E8),
+            surfaceContainerLow = Color(0xFFF1E6D5),
+            onSurface = Color(0xFF3F3A3B),
+            onSurfaceVariant = Color(0xFF5A5456),
+            primary = Color(0xFF6E5A70),
+        )
+    }
+}
+
+/**
+ * Keeps note view cards visually separate from the rest of the app while
+ * still following the active light or dark note palette.
+ */
+@Composable
+private fun NoteSectionCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        tonalElevation = 4.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            content = content,
+        )
     }
 }
 

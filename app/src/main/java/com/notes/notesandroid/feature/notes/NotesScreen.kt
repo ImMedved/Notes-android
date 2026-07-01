@@ -25,6 +25,10 @@ import com.notes.notesandroid.ui.components.PullToRevealSyncContainer
 import com.notes.notesandroid.ui.components.SectionCard
 import com.notes.notesandroid.util.formatTimestamp
 
+/**
+ * Entry point for the notes module. It renders the locally cached list,
+ * exposes note creation, and routes each card into the dedicated note workflow.
+ */
 @Composable
 fun NotesRoute(
     repository: NotesRepository,
@@ -61,6 +65,8 @@ fun NotesRoute(
                 }
             }
 
+            // Cards always open the view screen first; title and markdown editing
+            // are intentionally one step deeper in the workflow.
             items(state.value.notes, key = { it.id }) { note ->
                 NoteCard(
                     note = note,
@@ -79,6 +85,8 @@ private fun NoteCard(
     onDelete: () -> Unit,
 ) {
     SectionCard {
+        // The list stays compact and only shows a derived preview line, while
+        // the full markdown preview is rendered on the note detail screen.
         Text(note.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(
             text = note.previewText(),
